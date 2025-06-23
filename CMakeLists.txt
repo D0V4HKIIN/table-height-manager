@@ -44,9 +44,15 @@ pico_set_program_version(test "0.1")
 pico_enable_stdio_uart(test 0)
 pico_enable_stdio_usb(test 1)
 
+add_subdirectory(pico-ssd1306)
+
 # Add the standard library to the build
 target_link_libraries(test
-        pico_stdlib)
+        pico_stdlib
+        pico_multicore
+        pico_ssd1306
+        hardware_i2c # needed for pico-ssd1306
+        )
 
 # Add the standard include files to the build
 target_include_directories(test PRIVATE
@@ -54,10 +60,10 @@ target_include_directories(test PRIVATE
 )
 
 # Add any user requested libraries
-target_link_libraries(test 
-        hardware_timer
-        hardware_clocks
-        )
+# target_link_libraries(test 
+#         hardware_timer
+#         hardware_clocks
+#         )
 
 pico_add_extra_outputs(test)
 
