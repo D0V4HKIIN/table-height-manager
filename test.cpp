@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <math.h>
 
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
@@ -14,7 +15,7 @@
 #define I2C_PIN_SDA PICO_DEFAULT_I2C_SDA_PIN
 #define I2C_PIN_SCL PICO_DEFAULT_I2C_SCL_PIN
 
-unsigned int num_smooth = 10;
+unsigned int num_smooth = 100;
 void read_smooth()
 {
     while (1)
@@ -95,13 +96,22 @@ int main()
     double d = 150.;
     while (true)
     {
+        display.clear();
 
         // for (int i = 0; i < num_smooth; i++)
         // {
-        d = measure_distance() / num_smooth + d * (num_smooth - 1) / num_smooth;
+        double m = measure_distance();
+        if (std::abs(d - m) < 10.)
+        {
+            d = m / num_smooth + d * (num_smooth - 1) / num_smooth;
+        }
+        else // speed things up if there is a large difference
+        {
+            d = m;
+            drawText(&display, font_16x32, ":0", 95, 0);
+        }
         // }
 
-        display.clear();
         char str[20];
         sprintf(str, "%.0f mm", d);
         drawText(&display, font_16x32, str, 0, 0);
