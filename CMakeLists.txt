@@ -49,7 +49,9 @@ add_subdirectory(pico-ssd1306)
 # Add the standard library to the build
 target_link_libraries(test
         pico_stdlib
-        pico_multicore
+        # pico_multicore
+        hardware_flash
+        hardware_sync
         pico_ssd1306
         hardware_i2c # needed for pico-ssd1306
         )

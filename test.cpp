@@ -2,7 +2,10 @@
 #include <math.h>
 
 #include "pico/stdlib.h"
-#include "pico/multicore.h"
+// #include "pico/multicore.h"
+#include "pico/flash.h"
+#include "hardware/flash.h"
+#include "hardware/sync.h" // for the interrupts
 
 #include "pico-ssd1306/ssd1306.h"
 #include "pico-ssd1306/textRenderer/TextRenderer.h"
@@ -15,10 +18,94 @@
 #define I2C_PIN_SDA PICO_DEFAULT_I2C_SDA_PIN
 #define I2C_PIN_SCL PICO_DEFAULT_I2C_SCL_PIN
 
-#define BUTTON1_PIN 18
-#define BUTTON2_PIN 19
-#define BUTTON3_PIN 20
-#define BUTTON4_PIN 21
+#define PRESET1_PIN 18
+#define PRESET2_PIN 19
+#define PRESET3_PIN 20
+#define SAVE_PIN 21
+
+double preset1 = 750.;
+double preset2 = 1145.;
+double preset3 = 700.;
+
+#define FLASH_TARGET_OFFSET ((1024 + 512) * 1024) // choosing to start at 1024k + 512k
+
+// This function will be called when it's safe to call flash_range_erase
+static void call_flash_range_erase(void *param)
+{
+    uint32_t offset = (uint32_t)param;
+    flash_range_erase(offset, FLASH_SECTOR_SIZE);
+}
+
+// This function will be called when it's safe to call flash_range_program
+static void call_flash_range_program(void *param)
+{
+    uint32_t offset = ((uintptr_t *)param)[0];
+    const uint8_t *data = (const uint8_t *)((uintptr_t *)param)[1];
+    flash_range_program(offset, data, FLASH_PAGE_SIZE);
+}
+
+void save_presets()
+{
+    fprintf(stderr, "a\n");
+    double data[FLASH_PAGE_SIZE / sizeof(double)] = {preset1, preset2, preset3};
+    // uint8_t data[FLASH_PAGE_SIZE];
+    fprintf(stderr, "z %d\n", sizeof(data));
+    uint8_t *as_bytes = (uint8_t *)data;
+    unsigned int size = sizeof(data);
+    fprintf(stderr, "b %d\n", size);
+
+    int writeSize = (size / FLASH_PAGE_SIZE) + 1;                              // how many flash pages we're gonna need to write
+    int sectorCount = ((writeSize * FLASH_PAGE_SIZE) / FLASH_SECTOR_SIZE) + 1; // how many flash sectors we're gonna need to erase
+
+    fprintf(stderr, "c %d, %d\n", writeSize, sectorCount);
+    uint32_t interrupts = save_and_disable_interrupts();
+    fprintf(stderr, "d\n");
+    int rc = flash_safe_execute(call_flash_range_erase, (void *)FLASH_TARGET_OFFSET, UINT32_MAX);
+    fprintf(stderr, "x %d, ok:%d\n", rc, PICO_OK);
+    // flash_range_erase(FLASH_TARGET_OFFSET, FLASH_SECTOR_SIZE * sectorCount);
+    void *params[] = {(void *)FLASH_TARGET_OFFSET, (void *)data};
+    rc = flash_safe_execute(call_flash_range_program, params, UINT32_MAX);
+    // flash_range_program(FLASH_TARGET_OFFSET, as_bytes, FLASH_PAGE_SIZE * writeSize);
+    fprintf(stderr, "f %d, ok:%d\n", rc, PICO_OK);
+    restore_interrupts(interrupts);
+    fprintf(stderr, "g\n");
+}
+
+void load_presets()
+{
+    double data[3];
+    uint8_t *as_bytes = (uint8_t *)&data;
+    unsigned int size = sizeof(data);
+
+    const uint8_t *flash_target_contents = (const uint8_t *)(XIP_BASE + FLASH_TARGET_OFFSET);
+    memcpy(as_bytes, flash_target_contents, size);
+
+    preset1 = data[0];
+    preset2 = data[1];
+    preset3 = data[2];
+}
+
+void triangle_up(pico_ssd1306::SSD1306 &display)
+{
+    for (int y = 0; y < 32; y++)
+    {
+        for (int x = 15 - y / 2; x < 15 + y / 2; x++)
+        {
+            display.setPixel(x + 95, y);
+        }
+    }
+}
+
+void triangle_down(pico_ssd1306::SSD1306 &display)
+{
+    for (int y = 0; y < 32; y++)
+    {
+        for (int x = y / 2; x < 32 - y / 2; x++)
+        {
+            display.setPixel(x + 95, y);
+        }
+    }
+}
 
 unsigned int num_smooth = 100;
 void read_smooth()
@@ -81,14 +168,14 @@ int main()
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
 
     // buttons
-    gpio_init(BUTTON1_PIN);
-    gpio_pull_down(BUTTON1_PIN);
-    gpio_init(BUTTON2_PIN);
-    gpio_pull_down(BUTTON2_PIN);
-    gpio_init(BUTTON3_PIN);
-    gpio_pull_down(BUTTON3_PIN);
-    gpio_init(BUTTON4_PIN);
-    gpio_pull_down(BUTTON4_PIN);
+    gpio_init(PRESET1_PIN);
+    gpio_pull_down(PRESET1_PIN);
+    gpio_init(PRESET2_PIN);
+    gpio_pull_down(PRESET2_PIN);
+    gpio_init(PRESET3_PIN);
+    gpio_pull_down(PRESET3_PIN);
+    gpio_init(SAVE_PIN);
+    gpio_pull_down(SAVE_PIN);
 
     // ultrasonic distance sensor
     gpio_init(TRIGGER_PIN);
@@ -108,16 +195,18 @@ int main()
     // Create a new display object
     pico_ssd1306::SSD1306 display = pico_ssd1306::SSD1306(I2C_PORT, 0x3C, pico_ssd1306::Size::W128xH32); // 0x3D for 128x64
 
-    // parallel reading of the serial port
-    multicore_launch_core1(read_smooth);
+    // load presets from flash
+    load_presets();
 
-    double d = 150.;
+    // parallel reading of the serial port
+    // multicore_launch_core1(read_smooth);
+
+    double d = preset1;
+    double goal = preset1;
     while (true)
     {
         display.clear();
 
-        // for (int i = 0; i < num_smooth; i++)
-        // {
         double m = measure_distance();
         if (std::abs(d - m) < 10.)
         {
@@ -128,11 +217,67 @@ int main()
             d = m;
             // drawText(&display, font_16x32, ":0", 95, 0);
         }
-        // }
 
-        char str[20];
-        sprintf(str, "%.0f mm%d", d, gpio_get(BUTTON1_PIN) + gpio_get(BUTTON2_PIN) + gpio_get(BUTTON3_PIN) + gpio_get(BUTTON4_PIN));
-        drawText(&display, font_16x32, str, 0, 0);
+        // check preset buttons
+        if (gpio_get(PRESET1_PIN))
+        {
+            goal = preset1;
+        }
+        else if (gpio_get(PRESET2_PIN))
+        {
+            goal = preset2;
+        }
+        else if (gpio_get(PRESET3_PIN))
+        {
+            goal = preset3;
+        }
+
+        // move table
+        if (d - goal > 2.)
+        {
+            triangle_down(display);
+        }
+
+        if (d - goal < -2.)
+        {
+            triangle_up(display);
+        }
+
+        // save button
+        if (gpio_get(SAVE_PIN))
+        {
+            fprintf(stderr, "saving\n");
+            printf("saving2\n");
+            drawText(&display, font_12x16, "Which", 0, 0);
+            drawText(&display, font_12x16, "preset?", 0, 16);
+            display.sendBuffer();
+            while (true)
+            {
+                if (gpio_get(PRESET1_PIN))
+                {
+                    preset1 = d;
+                    break;
+                }
+                else if (gpio_get(PRESET2_PIN))
+                {
+                    preset2 = d;
+                    break;
+                }
+                else if (gpio_get(PRESET3_PIN))
+                {
+                    preset3 = d;
+                    break;
+                }
+            }
+            save_presets();
+        }
+
+        char top_str[20];
+        char bot_str[20];
+        sprintf(top_str, "%.0f mm", d);
+        sprintf(bot_str, "%.0f mm", goal);
+        drawText(&display, font_12x16, top_str, 0, 0);
+        drawText(&display, font_12x16, bot_str, 0, 16);
         display.sendBuffer(); // Send buffer to device and show on screen
     }
 }
