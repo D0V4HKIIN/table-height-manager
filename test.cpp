@@ -15,6 +15,11 @@
 #define I2C_PIN_SDA PICO_DEFAULT_I2C_SDA_PIN
 #define I2C_PIN_SCL PICO_DEFAULT_I2C_SCL_PIN
 
+#define BUTTON1_PIN 18
+#define BUTTON2_PIN 19
+#define BUTTON3_PIN 20
+#define BUTTON4_PIN 21
+
 unsigned int num_smooth = 100;
 void read_smooth()
 {
@@ -69,11 +74,23 @@ double measure_distance()
 
 int main()
 {
+    // init serial
     stdio_init_all();
 
     gpio_init(PICO_DEFAULT_LED_PIN);
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
 
+    // buttons
+    gpio_init(BUTTON1_PIN);
+    gpio_pull_down(BUTTON1_PIN);
+    gpio_init(BUTTON2_PIN);
+    gpio_pull_down(BUTTON2_PIN);
+    gpio_init(BUTTON3_PIN);
+    gpio_pull_down(BUTTON3_PIN);
+    gpio_init(BUTTON4_PIN);
+    gpio_pull_down(BUTTON4_PIN);
+
+    // ultrasonic distance sensor
     gpio_init(TRIGGER_PIN);
     gpio_set_dir(TRIGGER_PIN, GPIO_OUT);
     gpio_put(TRIGGER_PIN, false);
@@ -81,16 +98,17 @@ int main()
     gpio_init(ECHO_PIN);
     gpio_set_dir(ECHO_PIN, GPIO_IN);
 
+    // screen
     i2c_init(I2C_PORT, 1000000); // Use i2c port with baud rate of 1Mhz
-    // // Set pins for I2C operation
+    // Set pins for I2C operation
     gpio_set_function(I2C_PIN_SDA, GPIO_FUNC_I2C);
     gpio_set_function(I2C_PIN_SCL, GPIO_FUNC_I2C);
     gpio_pull_up(I2C_PIN_SDA);
     gpio_pull_up(I2C_PIN_SCL);
-
-    // // Create a new display object
+    // Create a new display object
     pico_ssd1306::SSD1306 display = pico_ssd1306::SSD1306(I2C_PORT, 0x3C, pico_ssd1306::Size::W128xH32); // 0x3D for 128x64
 
+    // parallel reading of the serial port
     multicore_launch_core1(read_smooth);
 
     double d = 150.;
@@ -108,12 +126,12 @@ int main()
         else // speed things up if there is a large difference
         {
             d = m;
-            drawText(&display, font_16x32, ":0", 95, 0);
+            // drawText(&display, font_16x32, ":0", 95, 0);
         }
         // }
 
         char str[20];
-        sprintf(str, "%.0f mm", d);
+        sprintf(str, "%.0f mm%d", d, gpio_get(BUTTON1_PIN) + gpio_get(BUTTON2_PIN) + gpio_get(BUTTON3_PIN) + gpio_get(BUTTON4_PIN));
         drawText(&display, font_16x32, str, 0, 0);
         display.sendBuffer(); // Send buffer to device and show on screen
     }
